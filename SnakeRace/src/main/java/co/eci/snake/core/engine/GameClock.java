@@ -13,7 +13,9 @@ public final class GameClock implements AutoCloseable {
   private final long periodMillis;
   private final Runnable tick;
   private final java.util.concurrent.atomic.AtomicReference<GameState> state = new AtomicReference<>(GameState.STOPPED);
-
+  
+  private volatile java.util.concurrent.ScheduledFuture<?> future;
+  
   public GameClock(long periodMillis, Runnable tick) {
     if (periodMillis <= 0) throw new IllegalArgumentException("periodMillis must be > 0");
     this.periodMillis = periodMillis;
@@ -22,14 +24,34 @@ public final class GameClock implements AutoCloseable {
 
   public void start() {
     if (state.compareAndSet(GameState.STOPPED, GameState.RUNNING)) {
-      scheduler.scheduleAtFixedRate(() -> {
-        if (state.get() == GameState.RUNNING) tick.run();
-      }, 0, periodMillis, TimeUnit.MILLISECONDS);
+      future = scheduler.scheduleAtFixedRate(tick, 0L, periodMillis, TimeUnit.MILLISECONDS);
     }
   }
 
-  public void pause()  { state.set(GameState.PAUSED); }
-  public void resume() { state.set(GameState.RUNNING); }
-  public void stop()   { state.set(GameState.STOPPED); }
+  public void pause() {
+    GameState prev = state.getAndSet(GameState.PAUSED);
+    if (prev == GameState.RUNNING) {
+        java.util.concurrent.ScheduledFuture<?> f = future;
+        if (f != null) {
+            f.cancel(false);
+        }
+    }
+  }
+
+  public void resume() {
+    GameState prev = state.getAndSet(GameState.RUNNING);
+    if (prev == GameState.PAUSED) {
+      future = scheduler.scheduleAtFixedRate(tick, 0L, periodMillis, TimeUnit.MILLISECONDS);
+    }
+  }
+
+  public void stop() {
+    state.set(GameState.STOPPED);
+    java.util.concurrent.ScheduledFuture<?> f = future;
+    if (f != null) {
+      f.cancel(false);
+    }
+  }
+
   @Override public void close() { scheduler.shutdownNow(); }
 }
